@@ -71,7 +71,12 @@ ok
 ### `run`
 
 ```text
+summary: endpoint=https://s3.example.com bucket=perf-test-bucket duration=30s
+- delete ops/s=  266.67 mb/s=    4.50 p95=  40.00ms err=  1.50%
+- get    ops/s=  333.33 mb/s=    6.00 p95=  58.00ms err=  1.50%
+- put    ops/s=  400.00 mb/s=    7.30 p95=  70.00ms err=  1.50%
 done: run1.json (+ run1.csv)
+thresholds: PASS
 ```
 
 Creates:
@@ -99,7 +104,14 @@ Example `run1.json` snippet:
 
 ```text
 Compare (B vs A)
-- put: ops/s 400.00 -> 400.00 (+0.00)
-- delete: ops/s 266.67 -> 266.67 (+0.00)
-- get: ops/s 333.33 -> 333.33 (+0.00)
+- put
+  ops/s: 400.00 -> 420.00 (+5.00%)
+  mb/s:  7.30 -> 7.80 (+6.85%)
+  p95ms: 70.00 -> 62.00 (-11.43%)
+  err%:  1.50 -> 1.20 (-20.00%)
+- get
+  ops/s: 333.33 -> 340.00 (+2.00%)
+  mb/s:  6.00 -> 6.10 (+1.67%)
+  p95ms: 58.00 -> 54.00 (-6.90%)
+  err%:  1.50 -> 1.40 (-6.67%)
 ```

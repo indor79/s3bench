@@ -60,6 +60,9 @@ func cmdRun(args []string) {
 		fmt.Println("run error:", err)
 		os.Exit(4)
 	}
+
+	report.PrintSummary(res)
+
 	if err := report.WriteJSON(*out, res); err != nil {
 		fmt.Println("write json error:", err)
 		os.Exit(4)
