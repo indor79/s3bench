@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	"github.com/indor79/s3bench/internal/config"
 	"github.com/indor79/s3bench/internal/s3client"
+	"github.com/indor79/s3bench/internal/util"
 )
 
 type opAgg struct {
@@ -33,31 +33,36 @@ func (a *opAgg) addLatency(ms float64) {
 	a.latMu.Unlock()
 }
 
-type keyPool struct {
-	mu   sync.Mutex
-	keys []string
+type objectRef struct {
+	key  string
+	size int64
 }
 
-func (p *keyPool) add(k string) {
+type keyPool struct {
+	mu   sync.Mutex
+	keys []objectRef
+}
+
+func (p *keyPool) add(k objectRef) {
 	p.mu.Lock()
 	p.keys = append(p.keys, k)
 	p.mu.Unlock()
 }
 
-func (p *keyPool) any() (string, bool) {
+func (p *keyPool) any() (objectRef, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if len(p.keys) == 0 {
-		return "", false
+		return objectRef{}, false
 	}
 	return p.keys[rand.Intn(len(p.keys))], true
 }
 
-func (p *keyPool) popAny() (string, bool) {
+func (p *keyPool) popAny() (objectRef, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if len(p.keys) == 0 {
-		return "", false
+		return objectRef{}, false
 	}
 	i := rand.Intn(len(p.keys))
 	k := p.keys[i]
@@ -79,21 +84,55 @@ func Run(c config.Config) (Result, error) {
 		return Result{}, err
 	}
 
-	size := int64(1024 * 1024) // v1 default: 1MiB
-	payload := bytes.Repeat([]byte("a"), int(size))
+	prefix := strings.Trim(c.Prefix, "/")
+	if prefix != "" {
+		prefix += "/"
+	}
+	runID := time.Now().UnixNano()
+
+	// Parse dataset sizes and pre-build payload buffers
+	var sizes []int64
+	payloadBySize := map[int64][]byte{}
+	for _, s := range c.Dataset.ObjectSizes {
+		sz, err := util.ParseSize(s)
+		if err != nil {
+			return Result{}, err
+		}
+		sizes = append(sizes, sz)
+		if _, ok := payloadBySize[sz]; !ok {
+			payloadBySize[sz] = bytes.Repeat([]byte("a"), int(sz))
+		}
+	}
+
+	nextDet := int64(0)
+	newKey := func() string {
+		if strings.EqualFold(c.Dataset.KeyMode, "deterministic") {
+			n := atomic.AddInt64(&nextDet, 1)
+			return fmt.Sprintf("%s%d-%08d", prefix, runID, n)
+		}
+		return fmt.Sprintf("%s%d-%d", prefix, runID, rand.Int63())
+	}
+
+	pickSize := func() int64 { return sizes[rand.Intn(len(sizes))] }
 
 	agg := map[string]*opAgg{
 		"put":    {},
 		"get":    {},
 		"delete": {},
 	}
-
 	pool := &keyPool{}
-	prefix := strings.Trim(c.Prefix, "/")
-	if prefix != "" {
-		prefix += "/"
+
+	// Prefill dataset for controlled GET/DELETE start
+	for i := 0; i < c.Dataset.PrefillObjects; i++ {
+		sz := pickSize()
+		key := newKey()
+		opCtx, cancel := context.WithTimeout(ctx, perReqTimeout)
+		_, putErr := cli.PutObject(opCtx, &s3.PutObjectInput{Bucket: &c.Bucket, Key: &key, Body: bytes.NewReader(payloadBySize[sz])})
+		cancel()
+		if putErr == nil {
+			pool.add(objectRef{key: key, size: sz})
+		}
 	}
-	runID := time.Now().UnixNano()
 
 	chooseOp := func() string {
 		switch strings.ToLower(c.Workload.Mode) {
@@ -119,49 +158,51 @@ func Run(c config.Config) (Result, error) {
 		defer cancel()
 		start := time.Now()
 		var opErr error
+		var opBytes int64
 
 		switch op {
 		case "put":
-			key := fmt.Sprintf("%s%d-%d", prefix, runID, rand.Int63())
-			_, opErr = cli.PutObject(opCtx, &s3.PutObjectInput{
-				Bucket: &c.Bucket,
-				Key:    &key,
-				Body:   bytes.NewReader(payload),
-			})
+			sz := pickSize()
+			key := newKey()
+			_, opErr = cli.PutObject(opCtx, &s3.PutObjectInput{Bucket: &c.Bucket, Key: &key, Body: bytes.NewReader(payloadBySize[sz])})
 			if opErr == nil {
-				pool.add(key)
+				pool.add(objectRef{key: key, size: sz})
+				opBytes = sz
 			}
 		case "get":
-			key, ok := pool.any()
+			ref, ok := pool.any()
 			if !ok {
 				runOp("put", collect)
 				return
 			}
-			obj, err := cli.GetObject(opCtx, &s3.GetObjectInput{Bucket: &c.Bucket, Key: &key})
+			obj, err := cli.GetObject(opCtx, &s3.GetObjectInput{Bucket: &c.Bucket, Key: &ref.key})
 			opErr = err
 			if err == nil && obj != nil {
 				_ = obj.Body.Close()
+				opBytes = ref.size
 			}
 		case "delete":
-			key, ok := pool.popAny()
+			ref, ok := pool.popAny()
 			if !ok {
 				runOp("put", collect)
 				return
 			}
-			_, opErr = cli.DeleteObject(opCtx, &s3.DeleteObjectInput{Bucket: &c.Bucket, Key: &key})
+			_, opErr = cli.DeleteObject(opCtx, &s3.DeleteObjectInput{Bucket: &c.Bucket, Key: &ref.key})
+			if opErr == nil {
+				opBytes = ref.size
+			}
 		}
 
 		if !collect {
 			return
 		}
-
 		a := agg[op]
 		a.ops.Add(1)
 		if opErr != nil {
 			a.errors.Add(1)
 		} else {
 			a.success.Add(1)
-			a.bytes.Add(size)
+			a.bytes.Add(opBytes)
 		}
 		a.addLatency(float64(time.Since(start).Milliseconds()))
 	}
@@ -178,7 +219,6 @@ func Run(c config.Config) (Result, error) {
 		}
 	}
 
-	// Warmup phase
 	if warmup > 0 {
 		stopWarm := make(chan struct{})
 		var wg sync.WaitGroup
@@ -191,7 +231,6 @@ func Run(c config.Config) (Result, error) {
 		wg.Wait()
 	}
 
-	// Measure phase
 	stopRun := make(chan struct{})
 	var wg sync.WaitGroup
 	for i := 0; i < c.Execution.Workers; i++ {
@@ -210,7 +249,6 @@ func Run(c config.Config) (Result, error) {
 		if sec <= 0 {
 			sec = 1
 		}
-
 		a.latMu.Lock()
 		lat := append([]float64(nil), a.latency...)
 		a.latMu.Unlock()
@@ -228,12 +266,10 @@ func Run(c config.Config) (Result, error) {
 			}
 			return lat[i]
 		}
-
 		errorRate := 0.0
 		if ops > 0 {
 			errorRate = (float64(errors) / float64(ops)) * 100
 		}
-
 		return OpMetrics{
 			Ops:          ops,
 			Success:      success,
@@ -247,7 +283,7 @@ func Run(c config.Config) (Result, error) {
 		}
 	}
 
-	res := Result{
+	return Result{
 		Version:   "v1-sdk",
 		Timestamp: time.Now(),
 		Duration:  c.Execution.Duration,
@@ -258,17 +294,5 @@ func Run(c config.Config) (Result, error) {
 			"get":    toMetrics(agg["get"]),
 			"delete": toMetrics(agg["delete"]),
 		},
-	}
-
-	// best-effort bucket cleanup marker for eventual consistency awareness
-	_, _ = cli.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: &c.Bucket,
-		Key:    awsStr(fmt.Sprintf("%s%s", prefix, ".s3bench-run-complete")),
-		Body:   bytes.NewReader([]byte(time.Now().Format(time.RFC3339))),
-		ACL:    types.ObjectCannedACLPrivate,
-	})
-
-	return res, nil
+	}, nil
 }
-
-func awsStr(s string) *string { return &s }

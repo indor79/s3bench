@@ -29,6 +29,19 @@ execution:
   # Timeout per request (PUT/GET/DELETE)
   per_request_timeout: 10s
 
+dataset:
+  # Object sizes to include in workload (supports B, KiB, MiB, GiB)
+  object_sizes:
+    - 64KiB
+    - 1MiB
+    - 16MiB
+
+  # Number of objects created before measured run starts (helps GET/DELETE)
+  prefill_objects: 200
+
+  # deterministic => predictable incremental keys, random => random suffixes
+  key_mode: deterministic
+
 workload:
   # Mode: put | get | delete | mixed
   mode: mixed

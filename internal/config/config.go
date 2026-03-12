@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/indor79/s3bench/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -29,6 +30,12 @@ type Config struct {
 		PerRequestTimeout string `yaml:"per_request_timeout"`
 	} `yaml:"execution"`
 
+	Dataset struct {
+		ObjectSizes    []string `yaml:"object_sizes"`
+		PrefillObjects int      `yaml:"prefill_objects"`
+		KeyMode        string   `yaml:"key_mode"`
+	} `yaml:"dataset"`
+
 	Workload struct {
 		Mode string `yaml:"mode"`
 		Mix  struct {
@@ -48,16 +55,38 @@ func Load(path string) (Config, error) {
 	if err := yaml.Unmarshal(b, &c); err != nil {
 		return Config{}, err
 	}
-	return c, Validate(c)
+	if err := Validate(&c); err != nil {
+		return Config{}, err
+	}
+	return c, nil
 }
 
-func Validate(c Config) error {
+func Validate(c *Config) error {
 	if strings.TrimSpace(c.Endpoint) == "" {
 		return errors.New("endpoint is required")
 	}
 	if strings.TrimSpace(c.Bucket) == "" {
 		return errors.New("bucket is required")
 	}
+	if len(c.Dataset.ObjectSizes) == 0 {
+		c.Dataset.ObjectSizes = []string{"1MiB"}
+	}
+	if c.Dataset.PrefillObjects < 0 {
+		return errors.New("dataset.prefill_objects must be >= 0")
+	}
+	if strings.TrimSpace(c.Dataset.KeyMode) == "" {
+		c.Dataset.KeyMode = "deterministic"
+	}
+	km := strings.ToLower(strings.TrimSpace(c.Dataset.KeyMode))
+	if km != "deterministic" && km != "random" {
+		return errors.New("dataset.key_mode must be deterministic|random")
+	}
+	for _, s := range c.Dataset.ObjectSizes {
+		if _, err := util.ParseSize(s); err != nil {
+			return fmt.Errorf("dataset.object_sizes invalid: %w", err)
+		}
+	}
+
 	if strings.TrimSpace(c.Workload.Mode) == "" {
 		return errors.New("workload.mode is required")
 	}
