@@ -28,7 +28,7 @@ func WriteCSV(path string, r runner.Result) error {
 	w := csv.NewWriter(f)
 	defer w.Flush()
 
-	_ = w.Write([]string{"operation", "ops", "success", "errors", "ops_per_sec", "mb_per_sec"})
+	_ = w.Write([]string{"operation", "ops", "success", "errors", "ops_per_sec", "mb_per_sec", "p50_ms", "p95_ms", "p99_ms", "error_rate_pct"})
 	keys := make([]string, 0, len(r.Metrics))
 	for k := range r.Metrics {
 		keys = append(keys, k)
@@ -43,6 +43,10 @@ func WriteCSV(path string, r runner.Result) error {
 			fmt.Sprintf("%d", m.Errors),
 			fmt.Sprintf("%.2f", m.OpsPerSec),
 			fmt.Sprintf("%.2f", m.MBPerSec),
+			fmt.Sprintf("%.2f", m.P50Ms),
+			fmt.Sprintf("%.2f", m.P95Ms),
+			fmt.Sprintf("%.2f", m.P99Ms),
+			fmt.Sprintf("%.2f", m.ErrorRatePct),
 		})
 	}
 	return w.Error()

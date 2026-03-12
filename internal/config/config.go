@@ -17,8 +17,8 @@ type Config struct {
 	Prefix   string `yaml:"prefix"`
 
 	Auth struct {
-		AccessKeyEnv   string `yaml:"access_key_env"`
-		SecretKeyEnv   string `yaml:"secret_key_env"`
+		AccessKeyEnv    string `yaml:"access_key_env"`
+		SecretKeyEnv    string `yaml:"secret_key_env"`
 		SessionTokenEnv string `yaml:"session_token_env"`
 	} `yaml:"auth"`
 
@@ -60,6 +60,10 @@ func Validate(c Config) error {
 	}
 	if strings.TrimSpace(c.Workload.Mode) == "" {
 		return errors.New("workload.mode is required")
+	}
+	mode := strings.ToLower(strings.TrimSpace(c.Workload.Mode))
+	if mode != "put" && mode != "get" && mode != "delete" && mode != "mixed" {
+		return errors.New("workload.mode must be one of put|get|delete|mixed")
 	}
 	if c.Execution.Workers <= 0 {
 		return errors.New("execution.workers must be > 0")

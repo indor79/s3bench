@@ -1,0 +1,4 @@
+bin/
+run*.json
+run*.csv
+*.out
