@@ -70,6 +70,16 @@ func cmdRun(args []string) {
 		os.Exit(4)
 	}
 	fmt.Printf("done: %s (+ %s)\n", *out, csvPath)
+
+	fails := runner.CheckThresholds(cfg, res)
+	if len(fails) > 0 {
+		fmt.Println("thresholds: FAIL")
+		for _, f := range fails {
+			fmt.Println("-", f)
+		}
+		os.Exit(3)
+	}
+	fmt.Println("thresholds: PASS")
 }
 
 func cmdCompare(args []string) {

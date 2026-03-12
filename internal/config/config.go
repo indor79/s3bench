@@ -44,6 +44,12 @@ type Config struct {
 			Delete int `yaml:"delete"`
 		} `yaml:"mix"`
 	} `yaml:"workload"`
+
+	Thresholds struct {
+		P95MsMax          float64 `yaml:"p95_ms_max"`
+		ErrorRateMaxPct   float64 `yaml:"error_rate_max_pct"`
+		MinThroughputMBPS float64 `yaml:"min_throughput_mbps"`
+	} `yaml:"thresholds"`
 }
 
 func Load(path string) (Config, error) {
