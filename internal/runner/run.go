@@ -14,8 +14,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
-	"github.com/lodde/s3bench/internal/config"
-	"github.com/lodde/s3bench/internal/s3client"
+	"github.com/indor79/s3bench/internal/config"
+	"github.com/indor79/s3bench/internal/s3client"
 )
 
 type opAgg struct {

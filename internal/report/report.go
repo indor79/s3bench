@@ -7,7 +7,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/lodde/s3bench/internal/runner"
+	"github.com/indor79/s3bench/internal/runner"
 )
 
 func WriteJSON(path string, r runner.Result) error {

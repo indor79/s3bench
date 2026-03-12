@@ -1,4 +1,4 @@
-module github.com/lodde/s3bench
+module github.com/indor79/s3bench
 
 go 1.24
 

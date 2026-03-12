@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/lodde/s3bench/internal/runner"
+	"github.com/indor79/s3bench/internal/runner"
 )
 
 func Load(path string) (runner.Result, error) {

@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/lodde/s3bench/internal/compare"
-	"github.com/lodde/s3bench/internal/config"
-	"github.com/lodde/s3bench/internal/report"
-	"github.com/lodde/s3bench/internal/runner"
+	"github.com/indor79/s3bench/internal/compare"
+	"github.com/indor79/s3bench/internal/config"
+	"github.com/indor79/s3bench/internal/report"
+	"github.com/indor79/s3bench/internal/runner"
 )
 
 func main() {

@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
-	"github.com/lodde/s3bench/internal/config"
+	"github.com/indor79/s3bench/internal/config"
 )
 
 func New(ctx context.Context, c config.Config) (*s3.Client, error) {
