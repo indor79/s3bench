@@ -48,6 +48,9 @@ Run with built binary:
 ./bin/s3bench run -c bench.yaml -o run1.json
 ./bin/s3bench run -c bench.yaml -o run2.json
 ./bin/s3bench compare run1.json run2.json
+
+# Keep objects for debugging (skip cleanup)
+./bin/s3bench run -c bench.yaml -o debug-run.json --no-cleanup
 ```
 
 ## Config reference (bench.yaml)

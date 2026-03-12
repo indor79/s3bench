@@ -11,12 +11,18 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	"github.com/indor79/s3bench/internal/config"
 	"github.com/indor79/s3bench/internal/s3client"
 	"github.com/indor79/s3bench/internal/util"
 )
+
+type RunOptions struct {
+	NoCleanup bool
+}
 
 type opAgg struct {
 	ops     atomic.Int64
@@ -71,7 +77,7 @@ func (p *keyPool) popAny() (objectRef, bool) {
 	return k, true
 }
 
-func Run(c config.Config) (Result, error) {
+func Run(c config.Config, opts RunOptions) (Result, error) {
 	rand.Seed(time.Now().UnixNano())
 
 	warmup, _ := time.ParseDuration(c.Execution.Warmup)
@@ -89,8 +95,8 @@ func Run(c config.Config) (Result, error) {
 		prefix += "/"
 	}
 	runID := time.Now().UnixNano()
+	runPrefix := fmt.Sprintf("%s%d-", prefix, runID)
 
-	// Parse dataset sizes and pre-build payload buffers
 	var sizes []int64
 	payloadBySize := map[int64][]byte{}
 	for _, s := range c.Dataset.ObjectSizes {
@@ -108,21 +114,15 @@ func Run(c config.Config) (Result, error) {
 	newKey := func() string {
 		if strings.EqualFold(c.Dataset.KeyMode, "deterministic") {
 			n := atomic.AddInt64(&nextDet, 1)
-			return fmt.Sprintf("%s%d-%08d", prefix, runID, n)
+			return fmt.Sprintf("%s%08d", runPrefix, n)
 		}
-		return fmt.Sprintf("%s%d-%d", prefix, runID, rand.Int63())
+		return fmt.Sprintf("%s%d", runPrefix, rand.Int63())
 	}
-
 	pickSize := func() int64 { return sizes[rand.Intn(len(sizes))] }
 
-	agg := map[string]*opAgg{
-		"put":    {},
-		"get":    {},
-		"delete": {},
-	}
+	agg := map[string]*opAgg{"put": {}, "get": {}, "delete": {}}
 	pool := &keyPool{}
 
-	// Prefill dataset for controlled GET/DELETE start
 	for i := 0; i < c.Dataset.PrefillObjects; i++ {
 		sz := pickSize()
 		key := newKey()
@@ -241,6 +241,10 @@ func Run(c config.Config) (Result, error) {
 	close(stopRun)
 	wg.Wait()
 
+	if !opts.NoCleanup {
+		_ = cleanupPrefix(ctx, cli, c.Bucket, runPrefix)
+	}
+
 	toMetrics := func(a *opAgg) OpMetrics {
 		ops := a.ops.Load()
 		success := a.success.Load()
@@ -270,29 +274,46 @@ func Run(c config.Config) (Result, error) {
 		if ops > 0 {
 			errorRate = (float64(errors) / float64(ops)) * 100
 		}
-		return OpMetrics{
-			Ops:          ops,
-			Success:      success,
-			Errors:       errors,
-			OpsPerSec:    float64(ops) / sec,
-			MBPerSec:     (float64(a.bytes.Load()) / (1024 * 1024)) / sec,
-			P50Ms:        pct(50),
-			P95Ms:        pct(95),
-			P99Ms:        pct(99),
-			ErrorRatePct: errorRate,
-		}
+		return OpMetrics{Ops: ops, Success: success, Errors: errors, OpsPerSec: float64(ops) / sec, MBPerSec: (float64(a.bytes.Load()) / (1024 * 1024)) / sec, P50Ms: pct(50), P95Ms: pct(95), P99Ms: pct(99), ErrorRatePct: errorRate}
 	}
 
-	return Result{
-		Version:   "v1-sdk",
-		Timestamp: time.Now(),
-		Duration:  c.Execution.Duration,
-		Endpoint:  c.Endpoint,
-		Bucket:    c.Bucket,
-		Metrics: map[string]OpMetrics{
-			"put":    toMetrics(agg["put"]),
-			"get":    toMetrics(agg["get"]),
-			"delete": toMetrics(agg["delete"]),
-		},
-	}, nil
+	return Result{Version: "v1-sdk", Timestamp: time.Now(), Duration: c.Execution.Duration, Endpoint: c.Endpoint, Bucket: c.Bucket, Metrics: map[string]OpMetrics{"put": toMetrics(agg["put"]), "get": toMetrics(agg["get"]), "delete": toMetrics(agg["delete"])}}, nil
+}
+
+func cleanupPrefix(ctx context.Context, cli *s3.Client, bucket, prefix string) error {
+	var token *string
+	for {
+		listOut, err := cli.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: &bucket, Prefix: &prefix, ContinuationToken: token})
+		if err != nil {
+			return err
+		}
+		if len(listOut.Contents) == 0 && !aws.ToBool(listOut.IsTruncated) {
+			return nil
+		}
+		objs := make([]types.ObjectIdentifier, 0, len(listOut.Contents))
+		for _, o := range listOut.Contents {
+			if o.Key == nil {
+				continue
+			}
+			objs = append(objs, types.ObjectIdentifier{Key: o.Key})
+			if len(objs) == 1000 {
+				_, err = cli.DeleteObjects(ctx, &s3.DeleteObjectsInput{Bucket: &bucket, Delete: &types.Delete{Objects: objs, Quiet: aws.Bool(true)}})
+				if err != nil {
+					return err
+				}
+				objs = objs[:0]
+			}
+		}
+		if len(objs) > 0 {
+			_, err = cli.DeleteObjects(ctx, &s3.DeleteObjectsInput{Bucket: &bucket, Delete: &types.Delete{Objects: objs, Quiet: aws.Bool(true)}})
+			if err != nil {
+				return err
+			}
+		}
+		if !aws.ToBool(listOut.IsTruncated) {
+			break
+		}
+		token = listOut.NextContinuationToken
+	}
+	return nil
 }

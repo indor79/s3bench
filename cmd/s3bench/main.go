@@ -48,6 +48,7 @@ func cmdRun(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	cfgPath := fs.String("c", "bench.yaml", "config path")
 	out := fs.String("o", "result.json", "output json")
+	noCleanup := fs.Bool("no-cleanup", false, "skip cleanup of benchmark objects")
 	_ = fs.Parse(args)
 
 	cfg, err := config.Load(*cfgPath)
@@ -55,7 +56,7 @@ func cmdRun(args []string) {
 		fmt.Println("config error:", err)
 		os.Exit(2)
 	}
-	res, err := runner.Run(cfg)
+	res, err := runner.Run(cfg, runner.RunOptions{NoCleanup: *noCleanup})
 	if err != nil {
 		fmt.Println("run error:", err)
 		os.Exit(4)
